@@ -6,28 +6,68 @@ import requests
 import os
 
 
-COINGECKO_API_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-BINANCE_API_URL = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+# Request headers - required for cloud environments
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "application/json",
+}
 
 
 def fetch_btc_price() -> float:
     """
-    Fetch current BTC price from CoinGecko API (primary) or Binance (fallback).
-    CoinGecko works globally while Binance is restricted in some regions.
+    Fetch current BTC price from multiple sources with fallbacks.
+    Uses proper headers required by cloud environments like Streamlit Cloud.
     """
-    # Try CoinGecko first (works globally, including US/Streamlit Cloud)
+    
+    # Source 1: Coinbase (most reliable, no restrictions)
     try:
-        response = requests.get(COINGECKO_API_URL, timeout=10)
+        response = requests.get(
+            "https://api.coinbase.com/v2/prices/BTC-USD/spot",
+            headers=HEADERS,
+            timeout=10
+        )
+        response.raise_for_status()
+        data = response.json()
+        if "data" in data and "amount" in data["data"]:
+            return float(data["data"]["amount"])
+    except Exception:
+        pass
+    
+    # Source 2: CoinGecko
+    try:
+        response = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+            headers=HEADERS,
+            timeout=10
+        )
         response.raise_for_status()
         data = response.json()
         if "bitcoin" in data and "usd" in data["bitcoin"]:
             return float(data["bitcoin"]["usd"])
     except Exception:
-        pass  # Fall through to Binance
+        pass
     
-    # Fallback to Binance
+    # Source 3: Kraken (also globally available)
     try:
-        response = requests.get(BINANCE_API_URL, timeout=10)
+        response = requests.get(
+            "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+            headers=HEADERS,
+            timeout=10
+        )
+        response.raise_for_status()
+        data = response.json()
+        if "result" in data and "XXBTZUSD" in data["result"]:
+            return float(data["result"]["XXBTZUSD"]["c"][0])
+    except Exception:
+        pass
+    
+    # Source 4: Binance (may be blocked in US)
+    try:
+        response = requests.get(
+            "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+            headers=HEADERS,
+            timeout=10
+        )
         response.raise_for_status()
         data = response.json()
         if "price" in data:
