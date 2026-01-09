@@ -1,4 +1,4 @@
-# ₿ BTC Paper Trading Bot
+# BTC Paper Trading Bot
 
 A live Bitcoin paper trading bot with **Volatility-Conditioned Regime Model** and **Continuous Online Learning**. Features a beautiful Streamlit dashboard with real-time price charts, prediction graphs, and trading metrics.
 
@@ -6,16 +6,16 @@ A live Bitcoin paper trading bot with **Volatility-Conditioned Regime Model** an
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.30+-red.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-## ✨ Features
+## Features
 
-- **🤖 ML-Powered Trading**: SGDRegressor with L2 regularization for online learning
-- **📊 Live Dashboard**: Real-time Streamlit interface with Plotly charts
-- **🔄 Continuous Learning**: Model improves with every new price tick
-- **📈 Regime Detection**: Volatility-conditioned trend/regime model
-- **💹 Paper Trading**: Risk-free simulation with $10,000 starting balance
-- **⚡ Aggressive Mode**: No-hold trading for maximum action
+- **ML-Powered Trading**: SGDRegressor with L2 regularization for online learning
+- **Live Dashboard**: Real-time Streamlit interface with Plotly charts
+- **Continuous Learning**: Model improves with every new price tick
+- **Regime Detection**: Volatility-conditioned trend/regime model
+- **Paper Trading**: Risk-free simulation with $10,000 starting balance
+- **Aggressive Mode**: No-hold trading for maximum action
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -48,7 +48,7 @@ A live Bitcoin paper trading bot with **Volatility-Conditioned Regime Model** an
 
 5. **Open in browser**: Navigate to `http://localhost:8501`
 
-## 📸 Dashboard Preview
+##Dashboard Preview
 
 The dashboard displays:
 - **Trading Metrics**: Cash, BTC holdings, portfolio value, PnL
@@ -56,7 +56,7 @@ The dashboard displays:
 - **Signal Indicators**: Current action, volatility regime, trend regime
 - **Trade Log**: Recent trade history with timestamps
 
-## 🧠 Model Architecture
+##Model Architecture
 
 ### Volatility-Conditioned Regime Model
 
@@ -116,7 +116,7 @@ Key parameters in `src/model.py`:
 | `STRONG_THRESHOLD` | 0.0003 | Strong signal threshold |
 | `WEAK_THRESHOLD` | 0.00005 | Weak signal threshold |
 
-## 🔧 Terminal Mode
+## Terminal Mode
 
 For terminal-based trading (no GUI):
 
@@ -124,14 +124,10 @@ For terminal-based trading (no GUI):
 python btc_paper_trader.py
 ```
 
-## 📝 License
+## License
 
 MIT License - feel free to use and modify!
 
-## ⚠️ Disclaimer
+## Disclaimer
 
 This is a **paper trading bot** for educational purposes only. It does not involve real money or actual trades. Past performance does not guarantee future results. Always do your own research before trading cryptocurrencies.
-
----
-
-Made with ❤️ and ₿itcoin
