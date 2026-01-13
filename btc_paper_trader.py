@@ -1,13 +1,14 @@
 """
 Enhanced Live Bitcoin Paper-Trading Bot
-Phase 1: Hedge-Fund-Style Alpha Model
+Phase 2: Model Discipline & Signal Governance
 
 Key Features:
 - Multi-horizon prediction (10s, 1m, 5m)
-- Regime awareness via learned features
+- ElasticNet regularization (L1 + L2 sparsity)
+- Feature contribution attribution
+- Coefficient drift monitoring
 - Volatility-normalized signals
 - Continuous position sizing (alpha / volatility)
-- Real-time alpha and regime metrics display
 
 Run: python btc_paper_trader.py
 """
@@ -16,7 +17,7 @@ import time
 import numpy as np
 import os
 from src.data import fetch_btc_price, load_historical_data
-from src.model import TradingBot, MIN_DATA_POINTS, ALPHA_WEIGHTS
+from src.model import TradingBot, MIN_DATA_POINTS, ALPHA_WEIGHTS, FEATURE_NAMES
 
 # =============================================================================
 # CONFIGURATION
@@ -78,7 +79,7 @@ def format_weight(weight: float) -> str:
         return f"{weight:+.2f}"
 
 
-def print_status(result: dict, state, learn_count: int):
+def print_status(result: dict, bot, learn_count: int):
     """
     Print comprehensive trading status with alpha model metrics.
     
@@ -88,7 +89,9 @@ def print_status(result: dict, state, learn_count: int):
     3. Regime metrics (learned features)
     4. Position sizing
     5. Portfolio stats
+    6. Phase 2: Feature attribution and model governance
     """
+    state = bot.state  # Extract state from bot
     # ANSI color codes
     GREEN = "\033[92m"
     RED = "\033[91m"
@@ -184,6 +187,53 @@ def print_status(result: dict, state, learn_count: int):
     
     print("═" * DISPLAY_WIDTH)
 
+    # Feature attribution
+    print_attribution(bot.alpha_model, BOLD, DIM, CYAN, RESET)
+    
+    # Model governance
+    print_governance(bot.alpha_model, BOLD, DIM, YELLOW, GREEN, RED, RESET)
+    
+    print("═" * DISPLAY_WIDTH)
+
+
+def print_attribution(alpha_model, BOLD, DIM, CYAN, RESET):
+    """Print feature attribution for the medium horizon (primary signal)."""
+    attr = alpha_model.last_attributions.get('medium')
+    if not attr:
+        return
+    
+    print(f"  {BOLD}SIGNAL ATTRIBUTION{RESET} (Medium Horizon)")
+    print(f"  Top 3: {CYAN}{', '.join(attr.top_contributors)}{RESET}")
+    
+    # Show top 3 contributions
+    sorted_contribs = sorted(attr.contributions, key=lambda x: x.abs_contribution, reverse=True)[:3]
+    for c in sorted_contribs:
+        sign = '+' if c.contribution >= 0 else ''
+        print(f"  {DIM}  └─ {c.feature_name}: {sign}{c.contribution:.6f}{RESET}")
+
+
+def print_governance(alpha_model, BOLD, DIM, YELLOW, GREEN, RED, RESET):
+    """Print model governance statistics."""
+    summary = alpha_model.get_governance_summary()
+    
+    print(f"  {BOLD}MODEL GOVERNANCE{RESET}")
+    for horizon in ['short', 'medium', 'long']:
+        if horizon in summary:
+            s = summary[horizon]
+            active = s['active_features']
+            sparsity = s['sparsity']
+            drift = s['drift']
+            
+            # Color code drift
+            if drift is not None:
+                drift_str = f"{drift:.3f}"
+                drift_color = RED if drift > 0.1 else YELLOW if drift > 0.05 else GREEN
+            else:
+                drift_str = "N/A"
+                drift_color = DIM
+            
+            print(f"  {DIM}{horizon:6s}:{RESET} {active}/12 active | sparsity: {sparsity:.0%} | drift: {drift_color}{drift_str}{RESET}")
+
 
 def print_warmup(current: int, required: int, price: float):
     """Print warmup progress."""
@@ -198,8 +248,8 @@ def print_header():
     """Print startup header."""
     print()
     print("═" * DISPLAY_WIDTH)
-    print("  BTC PAPER TRADING BOT - ALPHA MODEL v1.0")
-    print("  Phase 1: Hedge-Fund-Style Signal Construction")
+    print("  BTC PAPER TRADING BOT - ALPHA MODEL v2.0")
+    print("  Phase 2: Model Discipline & Signal Governance")
     print("═" * DISPLAY_WIDTH)
     print()
     print("  Multi-Horizon Prediction:")
@@ -207,13 +257,11 @@ def print_header():
     print(f"    • 1-minute  (weight: {int(ALPHA_WEIGHTS['medium']*100)}%)")
     print(f"    • 5-minute  (weight: {int(ALPHA_WEIGHTS['long']*100)}%)")
     print()
-    print("  Regime Features (learned, not hardcoded):")
-    print("    • Volatility ratio (short/long)")
-    print("    • Trend strength (signal-to-noise)")
-    print()
-    print("  Position Sizing:")
-    print("    • Continuous: position ∝ alpha / volatility")
-    print("    • Risk-adjusted: scales down in high vol")
+    print("  Phase 2 Features:")
+    print("    • ElasticNet regularization (L1 + L2)")
+    print("    • Feature contribution attribution")
+    print("    • Coefficient drift monitoring")
+    print("    • Sparsity tracking")
     print()
     print("─" * DISPLAY_WIDTH)
 
@@ -313,7 +361,7 @@ def main():
                 warmup_complete = True
             
             # Display trading status
-            print_status(result, bot.state, bot.alpha_model.total_learn_count)
+            print_status(result, bot, bot.alpha_model.total_learn_count)
             
             time.sleep(POLL_INTERVAL)
             

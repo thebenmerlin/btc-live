@@ -1,24 +1,31 @@
 """
-Alpha Model for BTC Paper Trading Bot - Phase 1
-Hedge-Fund-Style Signal Construction
+Alpha Model for BTC Paper Trading Bot - Phase 2
+Model Discipline & Signal Governance
 
-Key Design Principles:
+Phase 1 Features (maintained):
 1. Regime awareness via features (learned, not hardcoded)
 2. Multi-horizon prediction (10s, 1m, 5m) for noise reduction
 3. Volatility-normalized signals for scale-free comparison
 4. Continuous position sizing based on expected value
+
+Phase 2 Features (new):
+1. ElasticNet regularization (L1 + L2) for sparsity and stability
+2. Feature contribution attribution for every prediction
+3. Coefficient tracking and drift detection
+4. Signal governance for explainability
 
 Academic Framing:
 - Signals are continuous expected returns, not binary directions
 - All signals normalized by volatility → comparable across regimes
 - Multi-horizon blending → reduces noise, reinforces persistent trends
 - Position sizing ∝ alpha/volatility → Kelly-inspired risk management
+- L1 regularization enforces sparsity → weak signals shrink to zero
 """
 
 import numpy as np
 from sklearn.linear_model import SGDRegressor
 from dataclasses import dataclass, field
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict
 from datetime import datetime
 
 
@@ -54,6 +61,35 @@ POSITION_SCALE = 100.0      # Scaling factor for alpha → position conversion
 
 # Volatility floor to prevent division issues
 VOL_FLOOR = 1e-6
+
+# =============================================================================
+# PHASE 2: MODEL DISCIPLINE CONFIGURATION
+# =============================================================================
+
+# ElasticNet regularization parameters
+ELASTICNET_ALPHA = 0.001      # Overall regularization strength
+ELASTICNET_L1_RATIO = 0.5     # Balance: 0=L2, 1=L1, 0.5=equal mix
+
+# Coefficient tracking
+MAX_COEF_HISTORY = 500        # Max snapshots for drift detection
+COEF_DRIFT_THRESHOLD = 0.1    # Alert if coef changes > 10% in window
+COEF_TRACK_INTERVAL = 10      # Track coefficients every N updates
+
+# Feature names (must match compute_features output order)
+FEATURE_NAMES = [
+    'mom_short',      # Volatility-normalized short momentum
+    'mom_med',        # Volatility-normalized medium momentum  
+    'mom_long',       # Volatility-normalized long momentum
+    'zscore_20',      # Mean reversion signal (short)
+    'zscore_50',      # Mean reversion signal (long)
+    'ma_cross',       # Trend signal (MA crossover)
+    'trend_accel',    # Trend acceleration
+    'vol_short',      # Absolute volatility level
+    'log_vol_ratio',  # Regime state (vol expansion/contraction)
+    'vol_change',     # Volatility dynamics
+    'trend_strength', # Signal-to-noise ratio
+    'current_vol'     # Current vol for reference
+]
 
 
 # =============================================================================
@@ -96,6 +132,50 @@ class AlphaComponents:
     alpha_long: float = 0.0
     alpha_blended: float = 0.0
     predicted_vol: float = 0.0
+
+
+# =============================================================================
+# PHASE 2: ATTRIBUTION & TRACKING DATA STRUCTURES
+# =============================================================================
+
+@dataclass
+class FeatureContribution:
+    """Per-feature contribution to a prediction."""
+    feature_name: str
+    feature_value: float
+    coefficient: float
+    contribution: float  # feature_value * coefficient
+    
+    @property
+    def abs_contribution(self) -> float:
+        return abs(self.contribution)
+
+
+@dataclass  
+class CoefficientSnapshot:
+    """Snapshot of model coefficients at a point in time."""
+    timestamp: datetime
+    horizon: str
+    coefficients: np.ndarray
+    intercept: float
+
+
+@dataclass
+class SignalAttribution:
+    """Complete attribution for a prediction."""
+    horizon: str
+    prediction: float
+    intercept: float
+    contributions: List[FeatureContribution]
+    top_contributors: List[str]  # Top 3 features by |contribution|
+    
+    def to_dict(self) -> dict:
+        return {
+            'horizon': self.horizon,
+            'prediction': self.prediction,
+            'top_3': self.top_contributors,
+            'breakdown': {c.feature_name: c.contribution for c in self.contributions}
+        }
 
 
 @dataclass
@@ -324,31 +404,33 @@ def compute_features(prices: np.ndarray, regime: RegimeMetrics) -> np.ndarray:
 
 
 # =============================================================================
-# MULTI-HORIZON ALPHA MODEL
+# MULTI-HORIZON ALPHA MODEL - PHASE 2
 # =============================================================================
 
 class AlphaModel:
     """
-    Multi-horizon alpha model with online learning.
+    Multi-horizon alpha model with ElasticNet regularization and signal attribution.
     
-    Architecture:
-    - 3 separate SGDRegressors, each predicting returns at different horizons
+    Phase 2 Architecture:
+    - 3 separate SGDRegressors with ElasticNet (L1 + L2) regularization
     - Features are identical across horizons (let model learn horizon-specific patterns)
     - Outputs are blended into a single alpha using fixed weights
     - All predictions are volatility-normalized
+    - Full feature attribution for every prediction
+    - Coefficient tracking for drift detection
     
-    Why this works:
-    - Short horizon captures fast mean-reversion but is noisy
-    - Long horizon captures trends but reacts slowly
-    - Blending reduces noise while maintaining responsiveness
+    Why ElasticNet:
+    - L1 (Lasso): Enforces sparsity, weak features shrink to zero
+    - L2 (Ridge): Prevents coefficient explosion, improves stability
+    - Combined: Best of both worlds for noisy financial data
     """
     
     def __init__(self):
-        # Create separate models for each horizon
-        # Lower alpha (less regularization) for faster adaptation
+        # ElasticNet configuration: L1 + L2 regularization
         model_config = {
-            'penalty': 'l2',
-            'alpha': 0.001,
+            'penalty': 'elasticnet',           # L1 + L2 combined
+            'alpha': ELASTICNET_ALPHA,         # Overall regularization strength
+            'l1_ratio': ELASTICNET_L1_RATIO,   # Balance: 0=L2, 1=L1, 0.5=equal
             'random_state': 42,
             'warm_start': True,
             'learning_rate': 'invscaling',
@@ -361,18 +443,21 @@ class AlphaModel:
         self.model_medium = SGDRegressor(**model_config)
         self.model_long = SGDRegressor(**model_config)
         
-        self.trained = {
-            'short': False,
-            'medium': False,
-            'long': False
+        # Training state
+        self.trained = {'short': False, 'medium': False, 'long': False}
+        self.learn_counts = {'short': 0, 'medium': 0, 'long': 0}
+        
+        # Phase 2: Coefficient tracking for drift detection
+        self.coef_history: Dict[str, List[CoefficientSnapshot]] = {
+            'short': [], 'medium': [], 'long': []
         }
         
-        # Track learning for each horizon
-        self.learn_counts = {
-            'short': 0,
-            'medium': 0,
-            'long': 0
-        }
+        # Phase 2: Last attribution for display
+        self.last_attributions: Dict[str, SignalAttribution] = {}
+    
+    # =========================================================================
+    # CORE MODEL METHODS
+    # =========================================================================
     
     def partial_fit_horizon(self, horizon: str, features: np.ndarray, target: float):
         """Update a specific horizon model with new data."""
@@ -380,6 +465,10 @@ class AlphaModel:
         model.partial_fit(features, [target])
         self.trained[horizon] = True
         self.learn_counts[horizon] += 1
+        
+        # Track coefficients periodically (every COEF_TRACK_INTERVAL updates)
+        if self.learn_counts[horizon] % COEF_TRACK_INTERVAL == 0:
+            self._track_coefficients(horizon)
     
     def predict_horizon(self, horizon: str, features: np.ndarray) -> float:
         """Get prediction from a specific horizon model."""
@@ -390,20 +479,26 @@ class AlphaModel:
     
     def compute_alpha(self, features: np.ndarray, current_vol: float) -> AlphaComponents:
         """
-        Compute blended alpha from all horizons.
+        Compute blended alpha from all horizons with full attribution.
         
         Each horizon prediction is:
         1. Obtained from its model
-        2. Divided by current volatility (normalization)
-        3. Weighted according to ALPHA_WEIGHTS
-        4. Summed to produce final alpha
+        2. Attribution computed (which features contributed)
+        3. Divided by current volatility (normalization)
+        4. Weighted according to ALPHA_WEIGHTS
+        5. Summed to produce final alpha
         """
         vol = max(current_vol, VOL_FLOOR)
         
-        # Get raw predictions from each horizon
+        # Get raw predictions and compute attributions from each horizon
         pred_short = self.predict_horizon('short', features)
         pred_medium = self.predict_horizon('medium', features)
         pred_long = self.predict_horizon('long', features)
+        
+        # Compute attributions (updates self.last_attributions)
+        self.compute_attribution('short', features)
+        self.compute_attribution('medium', features)
+        self.compute_attribution('long', features)
         
         # Normalize by volatility → scale-free signals
         alpha_short = pred_short / vol
@@ -428,6 +523,165 @@ class AlphaModel:
     @property
     def total_learn_count(self) -> int:
         return sum(self.learn_counts.values())
+    
+    # =========================================================================
+    # PHASE 2: COEFFICIENT TRACKING
+    # =========================================================================
+    
+    def _track_coefficients(self, horizon: str):
+        """Record coefficient snapshot for drift analysis."""
+        if not self.trained[horizon]:
+            return
+        
+        model = getattr(self, f'model_{horizon}')
+        intercept = model.intercept_[0] if hasattr(model.intercept_, '__len__') else model.intercept_
+        
+        snapshot = CoefficientSnapshot(
+            timestamp=datetime.now(),
+            horizon=horizon,
+            coefficients=model.coef_.copy(),
+            intercept=intercept
+        )
+        
+        self.coef_history[horizon].append(snapshot)
+        
+        # Limit history size to prevent memory issues
+        if len(self.coef_history[horizon]) > MAX_COEF_HISTORY:
+            self.coef_history[horizon] = self.coef_history[horizon][-MAX_COEF_HISTORY:]
+    
+    def get_coefficient_drift(self, horizon: str, window: int = 50) -> Optional[float]:
+        """
+        Compute coefficient drift as relative L2 norm of change over window.
+        
+        Returns: drift ratio (0 = no change, >COEF_DRIFT_THRESHOLD = significant)
+        """
+        history = self.coef_history.get(horizon, [])
+        if len(history) < window:
+            return None
+        
+        old_coefs = history[-window].coefficients
+        new_coefs = history[-1].coefficients
+        
+        drift = np.linalg.norm(new_coefs - old_coefs) / (np.linalg.norm(old_coefs) + 1e-8)
+        return float(drift)
+    
+    def get_coefficients(self, horizon: str) -> Optional[np.ndarray]:
+        """Get current coefficients for a horizon."""
+        if not self.trained[horizon]:
+            return None
+        model = getattr(self, f'model_{horizon}')
+        return model.coef_.copy()
+    
+    # =========================================================================
+    # PHASE 2: FEATURE ATTRIBUTION
+    # =========================================================================
+    
+    def compute_attribution(self, horizon: str, features: np.ndarray) -> Optional[SignalAttribution]:
+        """
+        Compute feature-by-feature contribution to prediction.
+        
+        For linear model: prediction = intercept + sum(feature_i * coef_i)
+        So each feature's contribution is simply: feature_value * coefficient
+        """
+        if not self.trained[horizon]:
+            return None
+        
+        model = getattr(self, f'model_{horizon}')
+        coefs = model.coef_
+        intercept = model.intercept_[0] if hasattr(model.intercept_, '__len__') else model.intercept_
+        
+        feature_values = features.flatten()
+        contributions = []
+        
+        for i, (name, value, coef) in enumerate(zip(FEATURE_NAMES, feature_values, coefs)):
+            contributions.append(FeatureContribution(
+                feature_name=name,
+                feature_value=float(value),
+                coefficient=float(coef),
+                contribution=float(value * coef)
+            ))
+        
+        # Sort by absolute contribution to find top contributors
+        sorted_contribs = sorted(contributions, key=lambda x: x.abs_contribution, reverse=True)
+        top_3 = [c.feature_name for c in sorted_contribs[:3]]
+        
+        prediction = float(model.predict(features)[0])
+        
+        attribution = SignalAttribution(
+            horizon=horizon,
+            prediction=prediction,
+            intercept=float(intercept),
+            contributions=contributions,
+            top_contributors=top_3
+        )
+        
+        self.last_attributions[horizon] = attribution
+        return attribution
+    
+    # =========================================================================
+    # PHASE 2: FEATURE GOVERNANCE
+    # =========================================================================
+    
+    def get_feature_dominance(self, horizon: str) -> Optional[Dict[str, float]]:
+        """
+        Get feature importance as |coefficient| / sum(|coefficients|).
+        
+        Returns: dict mapping feature_name -> dominance ratio (0 to 1)
+        """
+        if not self.trained[horizon]:
+            return None
+        
+        model = getattr(self, f'model_{horizon}')
+        coefs = np.abs(model.coef_)
+        total = coefs.sum() + 1e-8
+        
+        return {name: float(coefs[i] / total) for i, name in enumerate(FEATURE_NAMES)}
+    
+    def get_active_features(self, horizon: str, threshold: float = 0.01) -> List[str]:
+        """
+        Get features with |coefficient| above threshold (non-sparse).
+        
+        With L1 regularization, weak features shrink to zero.
+        This method identifies which features are still "active".
+        """
+        if not self.trained[horizon]:
+            return []
+        
+        model = getattr(self, f'model_{horizon}')
+        active = []
+        for name, coef in zip(FEATURE_NAMES, model.coef_):
+            if abs(coef) > threshold:
+                active.append(name)
+        return active
+    
+    def get_sparsity_ratio(self, horizon: str, threshold: float = 0.01) -> float:
+        """
+        Get ratio of sparse (near-zero) features.
+        
+        Returns: 0.0 (all active) to 1.0 (all sparse)
+        """
+        if not self.trained[horizon]:
+            return 0.0
+        
+        model = getattr(self, f'model_{horizon}')
+        sparse_count = sum(1 for coef in model.coef_ if abs(coef) <= threshold)
+        return sparse_count / len(model.coef_)
+    
+    def get_governance_summary(self) -> Dict:
+        """Get comprehensive governance metrics for all horizons."""
+        summary = {}
+        for horizon in ['short', 'medium', 'long']:
+            if self.trained[horizon]:
+                summary[horizon] = {
+                    'active_features': len(self.get_active_features(horizon)),
+                    'sparsity': self.get_sparsity_ratio(horizon),
+                    'drift': self.get_coefficient_drift(horizon),
+                    'top_features': self.last_attributions.get(horizon, SignalAttribution(
+                        horizon=horizon, prediction=0, intercept=0, 
+                        contributions=[], top_contributors=[]
+                    )).top_contributors
+                }
+        return summary
 
 
 # =============================================================================
