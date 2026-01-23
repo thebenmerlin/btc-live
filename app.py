@@ -434,15 +434,38 @@ def display_current_signal(result: dict):
     if not result:
         return
     
-    action = result['action']
-    signal = result['signal_strength']
-    prediction = result['prediction']
+    # Extract data from the result dictionary
+    alpha = result.get('alpha')
+    regime = result.get('regime')
+    target_weight = result.get('target_weight', 0)
+    trade_info = result.get('trade_info')
     
-    signal_class = "signal-buy" if action == "BUY" else "signal-sell"
-    action_class = "buy-text" if action == "BUY" else "sell-text"
+    # Determine action based on target weight
+    if target_weight > 0.1:
+        action = "BUY"
+    elif target_weight < -0.1:
+        action = "SELL"
+    else:
+        action = "HOLD"
     
-    vol_regime = result['vol_regime']
-    trend_regime = result['trend_regime']
+    # Determine signal strength based on target weight magnitude
+    abs_weight = abs(target_weight)
+    if abs_weight > 0.5:
+        signal = "strong"
+    elif abs_weight > 0.2:
+        signal = "medium"
+    else:
+        signal = "weak"
+    
+    # Get prediction from alpha object
+    prediction = alpha.alpha_blended if alpha else 0.0
+    
+    signal_class = "signal-buy" if action == "BUY" else ("signal-sell" if action == "SELL" else "signal-box")
+    action_class = "buy-text" if action == "BUY" else ("sell-text" if action == "SELL" else "")
+    
+    # Get regime metrics
+    vol_regime = regime.vol_ratio if regime else 0.5
+    trend_regime = regime.trend_strength if regime else 0.0
     
     vol_label = "HIGH" if vol_regime > 0.7 else ("LOW" if vol_regime < 0.3 else "MED")
     trend_label = "UP" if trend_regime > 0.3 else ("DOWN" if trend_regime < -0.3 else "FLAT")
