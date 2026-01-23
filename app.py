@@ -616,7 +616,7 @@ def main():
         st.markdown('<div class="section-header">MARKET DATA</div>', unsafe_allow_html=True)
         
         prices = bot.state.prices[-100:] if len(bot.state.prices) > 100 else bot.state.prices
-        predictions = bot.state.predictions[-100:] if len(bot.state.predictions) > 100 else bot.state.predictions
+        predictions = bot.state.alpha_history[-100:] if len(bot.state.alpha_history) > 100 else bot.state.alpha_history
         
         fig = create_price_chart(prices, predictions)
         st.plotly_chart(fig, use_container_width=True)
