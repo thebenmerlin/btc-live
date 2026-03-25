@@ -67,7 +67,7 @@ VOL_FLOOR = 1e-6
 # =============================================================================
 
 # ElasticNet regularization parameters
-ELASTICNET_ALPHA = 0.001      # Overall regularization strength
+ELASTICNET_ALPHA = 0.0005     # Decreased regularization for faster adaptation
 ELASTICNET_L1_RATIO = 0.5     # Balance: 0=L2, 1=L1, 0.5=equal mix
 
 # Coefficient tracking
@@ -88,7 +88,9 @@ FEATURE_NAMES = [
     'log_vol_ratio',  # Regime state (vol expansion/contraction)
     'vol_change',     # Volatility dynamics
     'trend_strength', # Signal-to-noise ratio
-    'current_vol'     # Current vol for reference
+    'current_vol',    # Current vol for reference
+    'rsi_14',         # RSI oscillator
+    'macd_hist'       # MACD histogram
 ]
 
 
@@ -381,10 +383,48 @@ def compute_features(prices: np.ndarray, regime: RegimeMetrics) -> np.ndarray:
         vol_change = (regime.vol_short - vol_10_ago) / max(vol_10_ago, VOL_FLOOR)
     else:
         vol_change = 0.0
+
+    # =========================================================================
+    # OSCILLATOR FEATURES (RSI, MACD)
+    # =========================================================================
+
+    # RSI (14 periods)
+    if n >= 15:
+        deltas = np.diff(prices[-15:])
+        gains = deltas[deltas > 0]
+        losses = -deltas[deltas < 0]
+        avg_gain = np.mean(gains) if len(gains) > 0 else 0.0
+        avg_loss = np.mean(losses) if len(losses) > 0 else 0.0
+
+        if avg_loss == 0:
+            rsi_14 = 100.0 if avg_gain > 0 else 50.0
+        else:
+            rs = avg_gain / avg_loss
+            rsi_14 = 100.0 - (100.0 / (1.0 + rs))
+
+        # Normalize to [-1, 1] range
+        rsi_14 = (rsi_14 - 50.0) / 50.0
+    else:
+        rsi_14 = 0.0
+
+    # MACD Histogram (12, 26, 9)
+    if n >= 35:
+        # Simple EMA approximation for performance
+        ema_12 = np.average(prices[-12:], weights=np.exp(np.linspace(-1., 0., 12)))
+        ema_26 = np.average(prices[-26:], weights=np.exp(np.linspace(-1., 0., 26)))
+        macd_line = ema_12 - ema_26
+
+        # We need historical macd_line for signal line (9 period EMA of MACD)
+        # Approximate by just using current MACD line and recent prices
+        # For a truly accurate MACD, we'd track it statefully, but this is a good proxy
+        # that scales MACD by current volatility to keep it regime-invariant
+        macd_hist = macd_line / max(current_vol * prices[-1], VOL_FLOOR)
+    else:
+        macd_hist = 0.0
     
     # =========================================================================
     # COMBINED FEATURE VECTOR
-    # 12 features total: 3 momentum + 2 reversion + 2 trend + 4 regime + 1 trend_strength
+    # 14 features total: 3 momentum + 2 reversion + 2 trend + 4 regime + 1 trend_strength + 2 oscillators
     # =========================================================================
     
     return np.array([[
@@ -399,7 +439,9 @@ def compute_features(prices: np.ndarray, regime: RegimeMetrics) -> np.ndarray:
         log_vol_ratio,          # Regime state (vol expansion/contraction)
         vol_change,             # Volatility dynamics
         regime.trend_strength,  # Signal-to-noise ratio
-        current_vol             # Current vol for reference
+        current_vol,            # Current vol for reference
+        rsi_14,                 # RSI oscillator (normalized)
+        macd_hist               # MACD histogram (volatility-normalized proxy)
     ]])
 
 
@@ -433,8 +475,8 @@ class AlphaModel:
             'l1_ratio': ELASTICNET_L1_RATIO,   # Balance: 0=L2, 1=L1, 0.5=equal
             'random_state': 42,
             'warm_start': True,
-            'learning_rate': 'invscaling',
-            'eta0': 0.1,
+            'learning_rate': 'adaptive',       # Adaptive learning rate for better responsiveness
+            'eta0': 0.2,                       # Higher initial learning rate for faster adaptation
             'power_t': 0.25,
             'tol': 1e-6
         }

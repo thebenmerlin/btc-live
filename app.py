@@ -527,10 +527,20 @@ def display_trade_log(trades: list):
     for t in recent_trades:
         pnl_display = f"+${t.pnl:.2f}" if t.pnl >= 0 else f"-${abs(t.pnl):.2f}"
         action_display = f"[+] {t.action}" if t.action == "BUY" else f"[-] {t.action}"
+
+        # Calculate signal strength from target_weight if missing
+        abs_weight = abs(t.target_weight)
+        if abs_weight > 0.5:
+            signal_strength = "STRONG"
+        elif abs_weight > 0.2:
+            signal_strength = "MEDIUM"
+        else:
+            signal_strength = "WEAK"
+
         trade_data.append({
             "Time": t.timestamp.strftime("%H:%M:%S"),
             "Action": action_display,
-            "Signal": t.signal_strength.upper(),
+            "Signal": signal_strength,
             "BTC": f"{t.btc_amount:.6f}",
             "Price": f"${t.price:,.2f}",
             "P&L": pnl_display
