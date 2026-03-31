@@ -217,6 +217,15 @@ def print_governance(alpha_model, BOLD, DIM, YELLOW, GREEN, RED, RESET):
     summary = alpha_model.get_governance_summary()
     
     print(f"  {BOLD}MODEL GOVERNANCE{RESET}")
+
+    # Print dynamic weights for the primary (medium) horizon
+    if 'medium' in alpha_model.trained and alpha_model.trained['medium']:
+        weights = alpha_model.ensemble_weights['medium']
+        print(f"  {DIM}Ensemble Weights (Medium):{RESET} "
+              f"Linear: {weights['linear']:.2%} | "
+              f"RBF: {weights['rbf']:.2%} | "
+              f"MLP: {weights['mlp']:.2%}")
+
     for horizon in ['short', 'medium', 'long']:
         if horizon in summary:
             s = summary[horizon]
@@ -232,7 +241,7 @@ def print_governance(alpha_model, BOLD, DIM, YELLOW, GREEN, RED, RESET):
                 drift_str = "N/A"
                 drift_color = DIM
             
-            print(f"  {DIM}{horizon:6s}:{RESET} {active}/12 active | sparsity: {sparsity:.0%} | drift: {drift_color}{drift_str}{RESET}")
+            print(f"  {DIM}{horizon:6s}:{RESET} {active}/17 active | sparsity: {sparsity:.0%} | drift: {drift_color}{drift_str}{RESET}")
 
 
 def print_warmup(current: int, required: int, price: float):
@@ -248,8 +257,8 @@ def print_header():
     """Print startup header."""
     print()
     print("═" * DISPLAY_WIDTH)
-    print("  BTC PAPER TRADING BOT - ALPHA MODEL v2.0")
-    print("  Phase 2: Model Discipline & Signal Governance")
+    print("  BTC PAPER TRADING BOT - ALPHA MODEL v3.0")
+    print("  Phase 3: Advanced Features, Ensembles, and Hyperparameter Tuning")
     print("═" * DISPLAY_WIDTH)
     print()
     print("  Multi-Horizon Prediction:")
@@ -257,11 +266,11 @@ def print_header():
     print(f"    • 1-minute  (weight: {int(ALPHA_WEIGHTS['medium']*100)}%)")
     print(f"    • 5-minute  (weight: {int(ALPHA_WEIGHTS['long']*100)}%)")
     print()
-    print("  Phase 2 Features:")
-    print("    • ElasticNet regularization (L1 + L2)")
-    print("    • Feature contribution attribution")
-    print("    • Coefficient drift monitoring")
-    print("    • Sparsity tracking")
+    print("  Phase 3 Features:")
+    print("    • Advanced statistical features (Skew, Kurtosis, Bollinger Bands)")
+    print("    • Multi-model ensemble per horizon (Linear, RBF Kernel, MLP)")
+    print("    • Dynamic weighting based on EWMA of absolute prediction errors")
+    print("    • Feature attribution from interpretable linear component")
     print()
     print("─" * DISPLAY_WIDTH)
 

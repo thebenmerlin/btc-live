@@ -24,6 +24,8 @@ Academic Framing:
 
 import numpy as np
 from sklearn.linear_model import SGDRegressor
+from sklearn.neural_network import MLPRegressor
+from sklearn.kernel_approximation import RBFSampler
 from dataclasses import dataclass, field
 from typing import Tuple, List, Optional, Dict
 from datetime import datetime
@@ -90,7 +92,10 @@ FEATURE_NAMES = [
     'trend_strength', # Signal-to-noise ratio
     'current_vol',    # Current vol for reference
     'rsi_14',         # RSI oscillator
-    'macd_hist'       # MACD histogram
+    'macd_hist',      # MACD histogram
+    'rolling_skew',   # Distribution asymmetry
+    'rolling_kurt',   # Tail fatness
+    'bb_position'     # Bollinger Band position
 ]
 
 
@@ -423,8 +428,48 @@ def compute_features(prices: np.ndarray, regime: RegimeMetrics) -> np.ndarray:
         macd_hist = 0.0
     
     # =========================================================================
+    # ADVANCED STATISTICAL FEATURES (Skew, Kurtosis, Bollinger Bands)
+    # =========================================================================
+    import scipy.stats as stats
+
+    # 20-period statistical moments
+    if n >= 20:
+        window_20 = prices[-20:]
+
+        # Calculate log returns for moments
+        returns_20 = np.diff(np.log(window_20)) if len(window_20) > 1 else np.array([0.0])
+
+        if len(returns_20) > 2 and np.std(returns_20) > 1e-8:
+            rolling_skew = stats.skew(returns_20)
+            rolling_kurt = stats.kurtosis(returns_20)
+        else:
+            rolling_skew = 0.0
+            rolling_kurt = 0.0
+
+        # Bollinger Band Position
+        mean_20 = np.mean(window_20)
+        std_20 = np.std(window_20)
+        if std_20 > 1e-8:
+            upper_band = mean_20 + (2 * std_20)
+            lower_band = mean_20 - (2 * std_20)
+            band_width = upper_band - lower_band
+            if band_width > 1e-8:
+                # 0 = at lower band, 1 = at upper band, 0.5 = at mean
+                # We normalize to [-1, 1] range: (pos - 0.5) * 2
+                raw_pos = (prices[-1] - lower_band) / band_width
+                bb_position = (raw_pos - 0.5) * 2
+            else:
+                bb_position = 0.0
+        else:
+            bb_position = 0.0
+    else:
+        rolling_skew = 0.0
+        rolling_kurt = 0.0
+        bb_position = 0.0
+
+    # =========================================================================
     # COMBINED FEATURE VECTOR
-    # 14 features total: 3 momentum + 2 reversion + 2 trend + 4 regime + 1 trend_strength + 2 oscillators
+    # 17 features total: 3 momentum + 2 reversion + 2 trend + 4 regime + 1 trend_strength + 2 oscillators + 3 statistical
     # =========================================================================
     
     return np.array([[
@@ -441,7 +486,10 @@ def compute_features(prices: np.ndarray, regime: RegimeMetrics) -> np.ndarray:
         regime.trend_strength,  # Signal-to-noise ratio
         current_vol,            # Current vol for reference
         rsi_14,                 # RSI oscillator (normalized)
-        macd_hist               # MACD histogram (volatility-normalized proxy)
+        macd_hist,              # MACD histogram (volatility-normalized proxy)
+        rolling_skew,           # Distribution asymmetry
+        rolling_kurt,           # Tail fatness
+        bb_position             # Bollinger Band position
     ]])
 
 
@@ -451,20 +499,17 @@ def compute_features(prices: np.ndarray, regime: RegimeMetrics) -> np.ndarray:
 
 class AlphaModel:
     """
-    Multi-horizon alpha model with ElasticNet regularization and signal attribution.
+    Multi-horizon ensemble alpha model with ElasticNet, RBF Kernel, and MLP sub-models.
     
-    Phase 2 Architecture:
-    - 3 separate SGDRegressors with ElasticNet (L1 + L2) regularization
-    - Features are identical across horizons (let model learn horizon-specific patterns)
-    - Outputs are blended into a single alpha using fixed weights
+    Phase 3 Architecture:
+    - Ensembles for each horizon (short, medium, long)
+    - Sub-models per ensemble:
+        1. Linear (SGDRegressor with ElasticNet) - fast, interpretable, sparse
+        2. Non-linear (RBFSampler + SGDRegressor) - handles complex feature interactions
+        3. Deep Learning (MLPRegressor) - captures hierarchical patterns
+    - Features are identical across horizons and sub-models.
+    - Outputs are blended into a single alpha using fixed horizon weights
     - All predictions are volatility-normalized
-    - Full feature attribution for every prediction
-    - Coefficient tracking for drift detection
-    
-    Why ElasticNet:
-    - L1 (Lasso): Enforces sparsity, weak features shrink to zero
-    - L2 (Ridge): Prevents coefficient explosion, improves stability
-    - Combined: Best of both worlds for noisy financial data
     """
     
     def __init__(self):
@@ -481,14 +526,45 @@ class AlphaModel:
             'tol': 1e-6
         }
         
-        self.model_short = SGDRegressor(**model_config)
-        self.model_medium = SGDRegressor(**model_config)
-        self.model_long = SGDRegressor(**model_config)
-        
+        # Sub-models initialization for each horizon
+        for horizon in ['short', 'medium', 'long']:
+            # 1. Linear model (keeps name model_{horizon} for backward compatibility/attribution)
+            setattr(self, f'model_{horizon}', SGDRegressor(**model_config))
+
+            # 2. Non-linear model (RBF kernel approximation)
+            setattr(self, f'model_{horizon}_rbf_sampler', RBFSampler(gamma=1.0, random_state=42, n_components=50))
+            setattr(self, f'model_{horizon}_rbf', SGDRegressor(**model_config))
+
+            # 3. Deep Learning model
+            setattr(self, f'model_{horizon}_mlp', MLPRegressor(
+                hidden_layer_sizes=(16, 8),
+                activation='relu',
+                solver='sgd',
+                alpha=0.0001,
+                learning_rate='adaptive',
+                learning_rate_init=0.05,
+                warm_start=True,
+                random_state=42,
+                max_iter=1 # Online learning approach
+            ))
+
         # Training state
         self.trained = {'short': False, 'medium': False, 'long': False}
         self.learn_counts = {'short': 0, 'medium': 0, 'long': 0}
         
+        # Hyperparameter Tuning (Dynamic Weighting) Tracking
+        # Exponentially Weighted Moving Average (EWMA) of absolute errors
+        self.errors = {
+            'short': {'linear': 1.0, 'rbf': 1.0, 'mlp': 1.0},
+            'medium': {'linear': 1.0, 'rbf': 1.0, 'mlp': 1.0},
+            'long': {'linear': 1.0, 'rbf': 1.0, 'mlp': 1.0}
+        }
+        self.ensemble_weights = {
+            'short': {'linear': 0.33, 'rbf': 0.33, 'mlp': 0.33},
+            'medium': {'linear': 0.33, 'rbf': 0.33, 'mlp': 0.33},
+            'long': {'linear': 0.33, 'rbf': 0.33, 'mlp': 0.33}
+        }
+
         # Phase 2: Coefficient tracking for drift detection
         self.coef_history: Dict[str, List[CoefficientSnapshot]] = {
             'short': [], 'medium': [], 'long': []
@@ -502,22 +578,90 @@ class AlphaModel:
     # =========================================================================
     
     def partial_fit_horizon(self, horizon: str, features: np.ndarray, target: float):
-        """Update a specific horizon model with new data."""
-        model = getattr(self, f'model_{horizon}')
-        model.partial_fit(features, [target])
+        """Update all sub-models in a specific horizon ensemble with new data."""
+        # Predict before updating to calculate error
+        if self.trained[horizon]:
+            # Linear pred
+            model_linear = getattr(self, f'model_{horizon}')
+            pred_linear = float(model_linear.predict(features)[0])
+
+            # RBF pred
+            rbf_sampler = getattr(self, f'model_{horizon}_rbf_sampler')
+            model_rbf = getattr(self, f'model_{horizon}_rbf')
+            features_rbf = rbf_sampler.transform(features)
+            pred_rbf = float(model_rbf.predict(features_rbf)[0])
+
+            # MLP pred
+            model_mlp = getattr(self, f'model_{horizon}_mlp')
+            pred_mlp = float(model_mlp.predict(features)[0])
+
+            # Update EWMA errors
+            self.errors[horizon]['linear'] = 0.9 * self.errors[horizon]['linear'] + 0.1 * abs(pred_linear - target)
+            self.errors[horizon]['rbf'] = 0.9 * self.errors[horizon]['rbf'] + 0.1 * abs(pred_rbf - target)
+            self.errors[horizon]['mlp'] = 0.9 * self.errors[horizon]['mlp'] + 0.1 * abs(pred_mlp - target)
+
+            # Calculate new weights (inversely proportional to error)
+            # Add small epsilon to prevent division by zero
+            eps = 1e-8
+            w_linear = 1.0 / (self.errors[horizon]['linear'] + eps)
+            w_rbf = 1.0 / (self.errors[horizon]['rbf'] + eps)
+            w_mlp = 1.0 / (self.errors[horizon]['mlp'] + eps)
+
+            total_w = w_linear + w_rbf + w_mlp
+            self.ensemble_weights[horizon]['linear'] = w_linear / total_w
+            self.ensemble_weights[horizon]['rbf'] = w_rbf / total_w
+            self.ensemble_weights[horizon]['mlp'] = w_mlp / total_w
+        else:
+            # Need to fit sampler on first pass
+            rbf_sampler = getattr(self, f'model_{horizon}_rbf_sampler')
+            rbf_sampler.fit(features)
+
+        # 1. Linear model
+        model_linear = getattr(self, f'model_{horizon}')
+        model_linear.partial_fit(features, [target])
+
+        # 2. Non-linear model (RBF)
+        rbf_sampler = getattr(self, f'model_{horizon}_rbf_sampler')
+        model_rbf = getattr(self, f'model_{horizon}_rbf')
+        features_rbf = rbf_sampler.transform(features)
+        model_rbf.partial_fit(features_rbf, [target])
+
+        # 3. Deep Learning model (MLP)
+        model_mlp = getattr(self, f'model_{horizon}_mlp')
+        model_mlp.partial_fit(features, [target])
+
         self.trained[horizon] = True
         self.learn_counts[horizon] += 1
         
         # Track coefficients periodically (every COEF_TRACK_INTERVAL updates)
+        # Note: We only track the linear model for coefficient drift analysis
         if self.learn_counts[horizon] % COEF_TRACK_INTERVAL == 0:
             self._track_coefficients(horizon)
     
     def predict_horizon(self, horizon: str, features: np.ndarray) -> float:
-        """Get prediction from a specific horizon model."""
+        """Get ensemble prediction from a specific horizon."""
         if not self.trained[horizon]:
             return 0.0
-        model = getattr(self, f'model_{horizon}')
-        return float(model.predict(features)[0])
+
+        # 1. Linear prediction
+        model_linear = getattr(self, f'model_{horizon}')
+        pred_linear = float(model_linear.predict(features)[0])
+
+        # 2. RBF prediction
+        rbf_sampler = getattr(self, f'model_{horizon}_rbf_sampler')
+        model_rbf = getattr(self, f'model_{horizon}_rbf')
+        features_rbf = rbf_sampler.transform(features)
+        pred_rbf = float(model_rbf.predict(features_rbf)[0])
+
+        # 3. MLP prediction
+        model_mlp = getattr(self, f'model_{horizon}_mlp')
+        pred_mlp = float(model_mlp.predict(features)[0])
+
+        # Dynamic weighting based on recent performance
+        w = self.ensemble_weights[horizon]
+        ensemble_pred = (w['linear'] * pred_linear) + (w['rbf'] * pred_rbf) + (w['mlp'] * pred_mlp)
+
+        return ensemble_pred
     
     def compute_alpha(self, features: np.ndarray, current_vol: float) -> AlphaComponents:
         """
@@ -622,6 +766,10 @@ class AlphaModel:
         """
         Compute feature-by-feature contribution to prediction.
         
+        Note: We use the linear model's coefficients for attribution, as RBF and MLP
+        are not directly interpretable in the same way. The linear model serves as our
+        interpretable representation of the ensemble's logic.
+
         For linear model: prediction = intercept + sum(feature_i * coef_i)
         So each feature's contribution is simply: feature_value * coefficient
         """
