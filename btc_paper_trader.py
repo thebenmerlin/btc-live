@@ -30,6 +30,22 @@ DISPLAY_WIDTH = 74
 
 
 # =============================================================================
+# DISPLAY CONSTANTS
+# =============================================================================
+
+class Style:
+    """ANSI color codes for terminal formatting."""
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    CYAN = "\033[96m"
+    MAGENTA = "\033[95m"
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+
+
+# =============================================================================
 # DISPLAY FUNCTIONS
 # =============================================================================
 
@@ -92,15 +108,6 @@ def print_status(result: dict, bot, learn_count: int):
     6. Phase 2: Feature attribution and model governance
     """
     state = bot.state  # Extract state from bot
-    # ANSI color codes
-    GREEN = "\033[92m"
-    RED = "\033[91m"
-    YELLOW = "\033[93m"
-    CYAN = "\033[96m"
-    MAGENTA = "\033[95m"
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
     
     price = result['price']
     alpha = result['alpha']
@@ -113,8 +120,8 @@ def print_status(result: dict, bot, learn_count: int):
     portfolio_value = result['portfolio_value']
     
     # Determine colors
-    alpha_color = GREEN if alpha.alpha_blended > 0 else RED if alpha.alpha_blended < 0 else YELLOW
-    pnl_color = GREEN if pnl >= 0 else RED
+    alpha_color = Style.GREEN if alpha.alpha_blended > 0 else Style.RED if alpha.alpha_blended < 0 else Style.YELLOW
+    pnl_color = Style.GREEN if pnl >= 0 else Style.RED
     arrow = get_alpha_arrow(alpha.alpha_blended)
     vol_icon, trend_icon = get_regime_indicators(regime.vol_ratio, regime.trend_strength)
     
@@ -128,100 +135,100 @@ def print_status(result: dict, bot, learn_count: int):
     print("─" * DISPLAY_WIDTH)
     
     # Alpha section
-    print(f"  {BOLD}ALPHA (Blended):{RESET}    {alpha_color}{alpha.alpha_blended:+.5f} {arrow}{RESET}")
+    print(f"  {Style.BOLD}ALPHA (Blended):{Style.RESET}    {alpha_color}{alpha.alpha_blended:+.5f} {arrow}{Style.RESET}")
     
     # Multi-horizon breakdown
-    print(f"  {DIM}├─ 10s ({int(ALPHA_WEIGHTS['short']*100)}%):{RESET}       {alpha.alpha_short:+.5f}")
-    print(f"  {DIM}├─ 1m  ({int(ALPHA_WEIGHTS['medium']*100)}%):{RESET}       {alpha.alpha_medium:+.5f}")
-    print(f"  {DIM}└─ 5m  ({int(ALPHA_WEIGHTS['long']*100)}%):{RESET}       {alpha.alpha_long:+.5f}")
+    print(f"  {Style.DIM}├─ 10s ({int(ALPHA_WEIGHTS['short']*100)}%):{Style.RESET}       {alpha.alpha_short:+.5f}")
+    print(f"  {Style.DIM}├─ 1m  ({int(ALPHA_WEIGHTS['medium']*100)}%):{Style.RESET}       {alpha.alpha_medium:+.5f}")
+    print(f"  {Style.DIM}└─ 5m  ({int(ALPHA_WEIGHTS['long']*100)}%):{Style.RESET}       {alpha.alpha_long:+.5f}")
     
     print("─" * DISPLAY_WIDTH)
     
     # Regime metrics
-    print(f"  {BOLD}REGIME METRICS{RESET}  {vol_icon} {trend_icon}")
+    print(f"  {Style.BOLD}REGIME METRICS{Style.RESET}  {vol_icon} {trend_icon}")
     print(f"  Vol Short:         {regime.vol_short:.6f}   Vol Long:    {regime.vol_long:.6f}")
     print(f"  Vol Ratio:         {regime.vol_ratio:.2f}         Trend Str:   {regime.trend_strength:.2f}")
     
     print("─" * DISPLAY_WIDTH)
     
     # Position section
-    print(f"  {BOLD}POSITION{RESET}")
+    print(f"  {Style.BOLD}POSITION{Style.RESET}")
     
     # Color the weights
     target_str = f"{target_weight:+.2f}"
     current_str = f"{current_weight:+.2f}"
     
     if target_weight > 0.1:
-        target_color = GREEN
+        target_color = Style.GREEN
     elif target_weight < -0.1:
-        target_color = RED
+        target_color = Style.RED
     else:
-        target_color = YELLOW
+        target_color = Style.YELLOW
         
-    print(f"  Target Weight:     {target_color}{target_str}{RESET}      Current:     {current_str}")
+    print(f"  Target Weight:     {target_color}{target_str}{Style.RESET}      Current:     {current_str}")
     
     # Trade info
     if result['trade_executed'] and result['trade_info']:
         trade = result['trade_info']
-        action_color = GREEN if trade.action == "BUY" else RED
-        print(f"  {BOLD}Trade Executed:{RESET}    {action_color}{trade.action}{RESET} {trade.btc_amount:.6f} BTC (${trade.usd_amount:,.2f})")
+        action_color = Style.GREEN if trade.action == "BUY" else Style.RED
+        print(f"  {Style.BOLD}Trade Executed:{Style.RESET}    {action_color}{trade.action}{Style.RESET} {trade.btc_amount:.6f} BTC (${trade.usd_amount:,.2f})")
     else:
         delta = target_weight - current_weight
         if abs(delta) < 0.01:
-            print(f"  {DIM}Trade Required:     None (on target){RESET}")
+            print(f"  {Style.DIM}Trade Required:     None (on target){Style.RESET}")
         else:
-            print(f"  {DIM}Trade Required:     Pending rebalance (Δ{delta:+.2f}){RESET}")
+            print(f"  {Style.DIM}Trade Required:     Pending rebalance (Δ{delta:+.2f}){Style.RESET}")
     
     print("─" * DISPLAY_WIDTH)
     
     # Portfolio section
-    print(f"  {BOLD}PORTFOLIO{RESET}")
+    print(f"  {Style.BOLD}PORTFOLIO{Style.RESET}")
     print(f"  Value:             ${portfolio_value:,.2f}")
-    print(f"  PnL:               {pnl_color}${pnl:+,.2f} ({pnl_pct:+.2f}%){RESET}")
-    print(f"  Max Drawdown:      {RED if drawdown > 0.02 else DIM}-{drawdown*100:.2f}%{RESET}")
+    print(f"  PnL:               {pnl_color}${pnl:+,.2f} ({pnl_pct:+.2f}%){Style.RESET}")
+    print(f"  Max Drawdown:      {Style.RED if drawdown > 0.02 else Style.DIM}-{drawdown*100:.2f}%{Style.RESET}")
     
     print("─" * DISPLAY_WIDTH)
     
     # Learning stats
-    print(f"  {DIM}📚 Model Samples: {learn_count:,} | Trades: {state.trade_count}{RESET}")
+    print(f"  {Style.DIM}📚 Model Samples: {learn_count:,} | Trades: {state.trade_count}{Style.RESET}")
     
     print("═" * DISPLAY_WIDTH)
 
     # Feature attribution
-    print_attribution(bot.alpha_model, BOLD, DIM, CYAN, RESET)
+    print_attribution(bot.alpha_model)
     
     # Model governance
-    print_governance(bot.alpha_model, BOLD, DIM, YELLOW, GREEN, RED, RESET)
+    print_governance(bot.alpha_model)
     
     print("═" * DISPLAY_WIDTH)
 
 
-def print_attribution(alpha_model, BOLD, DIM, CYAN, RESET):
+def print_attribution(alpha_model):
     """Print feature attribution for the medium horizon (primary signal)."""
     attr = alpha_model.last_attributions.get('medium')
     if not attr:
         return
     
-    print(f"  {BOLD}SIGNAL ATTRIBUTION{RESET} (Medium Horizon)")
-    print(f"  Top 3: {CYAN}{', '.join(attr.top_contributors)}{RESET}")
+    print(f"  {Style.BOLD}SIGNAL ATTRIBUTION{Style.RESET} (Medium Horizon)")
+    print(f"  {Style.CYAN}Top 3: {', '.join(attr.top_contributors)}{Style.RESET}")
     
     # Show top 3 contributions
     sorted_contribs = sorted(attr.contributions, key=lambda x: x.abs_contribution, reverse=True)[:3]
     for c in sorted_contribs:
         sign = '+' if c.contribution >= 0 else ''
-        print(f"  {DIM}  └─ {c.feature_name}: {sign}{c.contribution:.6f}{RESET}")
+        print(f"  {Style.DIM}  └─ {c.feature_name}: {sign}{c.contribution:.6f}{Style.RESET}")
 
 
-def print_governance(alpha_model, BOLD, DIM, YELLOW, GREEN, RED, RESET):
+def print_governance(alpha_model):
     """Print model governance statistics."""
     summary = alpha_model.get_governance_summary()
     
-    print(f"  {BOLD}MODEL GOVERNANCE{RESET}")
+    print(f"  {Style.BOLD}MODEL GOVERNANCE{Style.RESET}")
 
     # Print dynamic weights for the primary (medium) horizon
     if 'medium' in alpha_model.trained and alpha_model.trained['medium']:
         weights = alpha_model.ensemble_weights['medium']
-        print(f"  {DIM}Ensemble Weights (Medium):{RESET} "
+        print(f"  {Style.DIM}Ensemble Weights (Medium):{Style.RESET} "
               f"Linear: {weights['linear']:.2%} | "
               f"RBF: {weights['rbf']:.2%} | "
               f"MLP: {weights['mlp']:.2%}")
@@ -236,12 +243,12 @@ def print_governance(alpha_model, BOLD, DIM, YELLOW, GREEN, RED, RESET):
             # Color code drift
             if drift is not None:
                 drift_str = f"{drift:.3f}"
-                drift_color = RED if drift > 0.1 else YELLOW if drift > 0.05 else GREEN
+                drift_color = Style.RED if drift > 0.1 else Style.YELLOW if drift > 0.05 else Style.GREEN
             else:
                 drift_str = "N/A"
-                drift_color = DIM
+                drift_color = Style.DIM
             
-            print(f"  {DIM}{horizon:6s}:{RESET} {active}/17 active | sparsity: {sparsity:.0%} | drift: {drift_color}{drift_str}{RESET}")
+            print(f"  {Style.DIM}{horizon:6s}:{Style.RESET} {active}/17 active | sparsity: {sparsity:.0%} | drift: {drift_color}{drift_str}{Style.RESET}")
 
 
 def print_warmup(current: int, required: int, price: float):
@@ -288,16 +295,13 @@ def print_summary(state, prices: list):
         pnl_pct = (pnl / state.initial_cash) * 100
         
         # Color codes
-        GREEN = "\033[92m"
-        RED = "\033[91m"
-        RESET = "\033[0m"
-        pnl_color = GREEN if pnl >= 0 else RED
+        pnl_color = Style.GREEN if pnl >= 0 else Style.RED
         
         print(f"  Total Trades:      {state.trade_count}")
         print(f"  Final Cash:        ${state.cash:,.2f}")
         print(f"  Final BTC:         {state.btc_position:.6f} BTC")
         print(f"  Final Portfolio:   ${portfolio_value:,.2f}")
-        print(f"  Total PnL:         {pnl_color}${pnl:+,.2f} ({pnl_pct:+.2f}%){RESET}")
+        print(f"  Total PnL:         {pnl_color}${pnl:+,.2f} ({pnl_pct:+.2f}%){Style.RESET}")
         print(f"  Max Drawdown:      -{state.drawdown*100:.2f}%")
         
         # Alpha stats
