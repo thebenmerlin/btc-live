@@ -1061,18 +1061,24 @@ class TradingBot:
         for horizon_name, horizon_ticks in [('short', HORIZON_SHORT), 
                                               ('medium', HORIZON_MED), 
                                               ('long', HORIZON_LONG)]:
-            new_pending = []
-            for (features, idx) in self._pending_targets[horizon_name]:
+            pending = self._pending_targets[horizon_name]
+            matured_count = 0
+
+            for (features, idx) in pending:
                 # Check if this prediction has matured
                 if idx + horizon_ticks < n:
                     # Compute actual return that occurred
                     actual_return = np.log(prices[idx + horizon_ticks] / prices[idx])
                     self.alpha_model.partial_fit_horizon(horizon_name, features, actual_return)
+                    matured_count += 1
                 else:
-                    # Not yet matured, keep waiting
-                    new_pending.append((features, idx))
+                    # Since targets are added sequentially, once we hit an
+                    # unmatured target, all subsequent ones are also unmatured.
+                    break
             
-            self._pending_targets[horizon_name] = new_pending
+            # Update pending list by removing matured items
+            if matured_count > 0:
+                self._pending_targets[horizon_name] = pending[matured_count:]
             
             # Limit pending queue size to prevent memory issues
             if len(self._pending_targets[horizon_name]) > horizon_ticks + 100:
